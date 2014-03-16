@@ -67,25 +67,17 @@
  */
 #include "user.h"         // User preferences file. Use this to select hardware options, passwords, etc.
 #include <Wire.h>         // Needed for I2C Connection to the DS1307 date/time chip
-#include <EEPROM.h>       // Needed for saving to non-voilatile memory on the Arduino.
 #include <avr/pgmspace.h> // Allows data to be stored in FLASH instead of RAM
 
+#include <EEPROM.h>       // Needed for saving to non-voilatile memory on the Arduino.
 #include <DS1307.h>             // DS1307 RTC Clock/Date/Time chip library
 #include <WIEGAND26.h>          // Wiegand 26 reader format libary
-
-#ifdef MCU328
 #include <PCATTACH.h>           // Pcint.h implementation, allows for >2 software interupts.
-#endif
-
-#ifdef MCPIOXP
 #include <Adafruit_MCP23017.h>  // Library for the MCP23017 i2c I/O expander
-#endif
-
-#ifdef AT24EEPROM
 #include <E24C1024.h>           // AT24C i2C EEPOROM library
-#define MIN_ADDRESS 0
+
+#define MIN_ADDRESS 0           // For EEPROM
 #define MAX_ADDRESS 4096        // 1x32K device
-#endif
 
 #define EEPROM_ALARM 0                  // EEPROM address to store alarm triggered state between reboots (0..511)
 #define EEPROM_ALARMARMED 1             // EEPROM address to store alarm armed state between reboots
@@ -120,21 +112,19 @@ const uint8_t analogsensorPins[] = {0, 1, 2, 3}; // Alarm Sensors connected to o
 
 // Global Boolean values
 boolean door1Locked = true;                       // Keeps track of whether the doors are supposed to be locked right now
-boolean door2Locked = true;
 boolean doorChime = false;                        // Keep track of when door chime last activated
 boolean doorClosed = false;                       // Keep track of when door last closed for exit delay
-boolean sensor[4] = {false};                     //  Keep track of tripped sensors, do not log again until reset.
+boolean sensor[4] = {false};                      //  Keep track of tripped sensors, do not log again until reset.
 
 // Global Timers
 unsigned long door1locktimer=0;                 // Keep track of when door is supposed to be relocked
-unsigned long door2locktimer=0;                 // after access granted.
 unsigned long alarmDelay=0;                     // Keep track of alarm delay. Used for "delayed activation" or level 2 alarm.
 unsigned long alarmSirenTimer=0;                // Keep track of how long alarm has gone off
 unsigned long consolefailTimer=0;               // Console password timer for failed logins
 unsigned long sensorDelay[2] = {0};             // Used with sensor[] above, but sets a timer for 2 of them. Useful for logging
-// motion detector hits for "occupancy check" functions.
+                                                // motion detector hits for "occupancy check" functions.
 
-#define numUsers (sizeof(superUserList)/sizeof(long))                  //User access array size (used in later loops/etc)
+#define numUsers (sizeof(superUserList)/sizeof(long))                  // User access array size (used in later loops/etc)
 #define NUMDOORS (sizeof(doorPin)/sizeof(uint8_t))
 #define numAlarmPins (sizeof(analogsensorPins)/sizeof(uint8_t))
 
@@ -144,17 +134,13 @@ uint8_t second, minute, hour, dayOfWeek, dayOfMonth, month, year;     // Global 
 uint8_t alarmActivated = EEPROM.read(EEPROM_ALARM);                   // Read the last alarm state as saved in eeprom.
 uint8_t alarmArmed = EEPROM.read(EEPROM_ALARMARMED);                  // Alarm level variable (0..5, 0==OFF) 
 
-uint8_t consoleFail=0;                          // Tracks failed console logins for lockout
+uint8_t consoleFail = 0;                          // Tracks failed console logins for lockout
 
 // Global values for the Wiegand RFID readers
 volatile long reader1 = 0;                      // Reader1 buffer
-long reader1dec=0;                              // Separate value for decoded reader1 values
-long reader2dec=0;                              // Separate value for decoded reader1 values
+long reader1dec = 0;                            // Separate value for decoded reader1 values
 volatile int  reader1Count = 0;                 // Reader1 received bits counter
-volatile long reader2 = 0;
-volatile int  reader2Count = 0;
-int userMask1=0;
-int userMask2=0;
+int userMask1 = 0;
 
 boolean keypadGranted = 0;                                       // Variable that is set for authenticated users to use keypad after login
 unsigned long keypadTime = 0;                                  // Timeout counter for  reader with key pad
@@ -165,120 +151,79 @@ char inString[64] = {0};                                         // Size of comm
 uint8_t inCount = 0;
 boolean privmodeEnabled = false;                               // Switch for enabling "priveleged" commands
 
-
-
 // Create an instance of the various C++ libraries we are using.
 DS1307 ds1307;        // RTC Instance
 WIEGAND26 wiegand26;  // Wiegand26 (RFID reader serial protocol) library
-
-#ifdef MCPIOXP
 Adafruit_MCP23017 mcp;
-#endif
-
-#ifdef MCU328
 PCATTACH pcattach;    // Software interrupt library
-#endif
 
 /* Set up some strings that will live in flash instead of memory. This saves our precious 2k of
  * RAM for something else.
  */
-const prog_uchar rebootMessage[]          PROGMEM  = {
-  "Access Control System rebooted."};
-const prog_uchar doorChimeMessage[]       PROGMEM  = {
-  "Front Door opened."};
-const prog_uchar doorslockedMessage[]     PROGMEM  = {
-  "All Doors relocked"};
-const prog_uchar alarmtrainMessage[]      PROGMEM  = {
-  "Alarm Training performed."};
-const prog_uchar privsdeniedMessage[]     PROGMEM  = {
-  "Access Denied. Priveleged mode is not enabled."};
-const prog_uchar privsenabledMessage[]    PROGMEM  = {
-  "Priveleged mode enabled."};
-const prog_uchar privsdisabledMessage[]   PROGMEM  = {
-  "Priveleged mode disabled."};
-const prog_uchar privsAttemptsMessage[]   PROGMEM  = {
-  "Too many failed attempts. Try again later."};
+const prog_uchar rebootMessage[]          PROGMEM  = {"Access Control System rebooted."};
+const prog_uchar doorChimeMessage[]       PROGMEM  = {"Front Door opened."};
+const prog_uchar doorslockedMessage[]     PROGMEM  = {"All Doors relocked"};
+const prog_uchar alarmtrainMessage[]      PROGMEM  = {"Alarm Training performed."};
+const prog_uchar privsdeniedMessage[]     PROGMEM  = {"Access Denied. Priveleged mode is not enabled."};
+const prog_uchar privsenabledMessage[]    PROGMEM  = {"Priveleged mode enabled."};
+const prog_uchar privsdisabledMessage[]   PROGMEM  = {"Priveleged mode disabled."};
+const prog_uchar privsAttemptsMessage[]   PROGMEM  = {"Too many failed attempts. Try again later."};
 
-const prog_uchar consolehelpMessage1[]    PROGMEM  = {
-  "Valid commands are:"};
-const prog_uchar consolehelpMessage2[]    PROGMEM  = {
-  "(d)ate, (s)show user, (m)odify user <num>  <usermask> <tagnumber>"};
-const prog_uchar consolehelpMessage3[]    PROGMEM  = {
-  "(a)ll user dump,(r)emove_user <num>,(o)open door <num>"};
-const prog_uchar consolehelpMessage4[]    PROGMEM  = {
-  "(u)nlock all doors,(l)lock all doors"};
-const prog_uchar consolehelpMessage5[]    PROGMEM  = {
-  "(1)disarm_alarm, (2)arm_alarm,(3)train_alarm (9)show_status"};
-const prog_uchar consolehelpMessage6[]    PROGMEM  = {
-  "(t)ime set <sec 0..59> <min 0..59> <hour 0..23> <day of week 1..7>"};
-const prog_uchar consolehelpMessage7[]    PROGMEM  = {
-  "           <day 0..31> <mon 0..12> <year 0.99>"};
-const prog_uchar consolehelpMessage8[]    PROGMEM  = {
-  "(e)nable <password> - enable or disable priveleged mode"};                                       
-const prog_uchar consolehelpMessage9[]    PROGMEM  = {
-  "(h)ardware Test <iterations> - Run the hardware test"};   
-const prog_uchar consoledefaultMessage[]  PROGMEM  = {
-  "Invalid command. Press '?' for help."};
+const prog_uchar consolehelpMessage1[]    PROGMEM  = {"Valid commands are:"};
+const prog_uchar consolehelpMessage2[]    PROGMEM  = {"(d)ate, (s)show user, (m)odify user <num>  <usermask> <tagnumber>"};
+const prog_uchar consolehelpMessage3[]    PROGMEM  = {"(a)ll user dump,(r)emove_user <num>,(o)open door <num>"};
+const prog_uchar consolehelpMessage4[]    PROGMEM  = {"(u)nlock all doors,(l)lock all doors"};
+const prog_uchar consolehelpMessage5[]    PROGMEM  = {"(1)disarm_alarm, (2)arm_alarm,(3)train_alarm (9)show_status"};
+const prog_uchar consolehelpMessage6[]    PROGMEM  = {"(t)ime set <sec 0..59> <min 0..59> <hour 0..23> <day of week 1..7>"};
+const prog_uchar consolehelpMessage7[]    PROGMEM  = {"           <day 0..31> <mon 0..12> <year 0.99>"};
+const prog_uchar consolehelpMessage8[]    PROGMEM  = {"(e)nable <password> - enable or disable priveleged mode"};                                       
+const prog_uchar consolehelpMessage9[]    PROGMEM  = {"(h)ardware Test <iterations> - Run the hardware test"};   
+const prog_uchar consoledefaultMessage[]  PROGMEM  = {"Invalid command. Press '?' for help."};
 
-const prog_uchar statusMessage1[]         PROGMEM  = {
-  "Alarm armed state (1=armed):"};
-const prog_uchar statusMessage2[]         PROGMEM  = {
-  "Alarm siren state (1=activated):"};
-const prog_uchar statusMessage3[]         PROGMEM  = {
-  "Front door open state (0=closed):"};
-const prog_uchar statusMessage4[]         PROGMEM  = {
-  "Roll up door open state (0=closed):"};     
-const prog_uchar statusMessage5[]         PROGMEM  = {
-  "Door 1 unlocked state(1=locked):"};                   
-const prog_uchar statusMessage6[]         PROGMEM  = {
-  "Door 2 unlocked state(1=locked):"}; 
+const prog_uchar statusMessage1[]         PROGMEM  = {"Alarm armed state (1=armed):"};
+const prog_uchar statusMessage2[]         PROGMEM  = {"Alarm siren state (1=activated):"};
+const prog_uchar statusMessage3[]         PROGMEM  = {"Front door open state (0=closed):"};
+const prog_uchar statusMessage4[]         PROGMEM  = {"Roll up door open state (0=closed):"};     
+const prog_uchar statusMessage5[]         PROGMEM  = {"Door 1 unlocked state(1=locked):"};                   
+const prog_uchar statusMessage6[]         PROGMEM  = {"Door 2 unlocked state(1=locked):"}; 
 
 void setup() 
 {
   Wire.begin();   // start Wire library as I2C-Bus Master
   mcp.begin();      // use default address 0
 
-  pinMode(2,INPUT);                // Initialize the Arduino built-in pins
-  pinMode(3,INPUT);
-  pinMode(4,INPUT);
-  pinMode(5,INPUT);
+  pinMode(2, INPUT);                // Initialize the Arduino built-in pins
+  pinMode(3, INPUT);
+  pinMode(4, INPUT);
+  pinMode(5, INPUT);
   mcp.pinMode(DOORPIN1, OUTPUT); 
-  mcp.pinMode(DOORPIN2, OUTPUT);
-  pinMode(6,OUTPUT);
+  pinMode(6, OUTPUT);
 
-  for(int i=0; i<=15; i++)        // Initialize the I/O expander pins
+  for(int i = 0; i <= 15; i++)        // Initialize the I/O expander pins
   {
     mcp.pinMode(i, OUTPUT);
   }
 
   digitalWrite(RS485ENA, HIGH);           // Set the RS485 chip to HIGH (not asserted)
 
-  /* Attach pin change interrupt service routines from the Wiegand RFID readers
-   */
-#ifdef MCU328
+  // Attach pin change interrupt service routines from the Wiegand RFID readers
   pcattach.PCattachInterrupt(reader1Pins[0], callReader1Zero, CHANGE); 
   pcattach.PCattachInterrupt(reader1Pins[1], callReader1One,  CHANGE);  
-  pcattach.PCattachInterrupt(reader2Pins[1], callReader2One,  CHANGE);
-  pcattach.PCattachInterrupt(reader2Pins[0], callReader2Zero, CHANGE);
-#endif
 
-  //Clear and initialize readers
-  wiegand26.initReaderOne(); //Set up Reader 1 and clear buffers.
-  wiegand26.initReaderTwo(); 
+  // Clear and initialize readers
+  wiegand26.initReaderOne(); // Set up Reader 1 and clear buffers.
 
-  mcp.digitalWrite(DOORPIN1, LOW);                               // Sets the relay outputs to LOW (relays off)
+  mcp.digitalWrite(DOORPIN1, LOW); // Sets the relay outputs to LOW (relays off)
   mcp.digitalWrite(DOORPIN2, LOW);
   mcp.digitalWrite(ALARMSTROBEPIN, LOW);
   mcp.digitalWrite(ALARMSIRENPIN, LOW);   
 
-  Serial.begin(UBAUDRATE);	               	       // Set up Serial output at 8,N,1,UBAUDRATE
+  Serial.begin(UBAUDRATE); // Set up Serial output at 8,N,1,UBAUDRATE
   logReboot();
-  chirpAlarm(1);                               // Chirp the alarm to show system ready.
+  chirpAlarm(1); // Chirp the alarm to show system ready.
 
   // Set up the MCP23017 IO expander and initialize
-#ifdef MCPIOXP 
   mcp.digitalWrite(STATUSLED, LOW);           // Turn the status LED green
-#endif
 }
 
 void loop()
@@ -289,7 +234,7 @@ void loop()
    * if needed. Uses global variables that can be set in other functions.
    */
 
-  if(((millis() - door1locktimer) >= DOORDELAY) && (door1locktimer !=0))
+  if(((millis() - door1locktimer) >= DOORDELAY) && (door1locktimer != 0))
   { 
     if(door1Locked == true) {
       doorLock(1);
@@ -300,20 +245,7 @@ void loop()
     }                         
   }
 
-  if(((millis() - door2locktimer) >= DOORDELAY) && (door2locktimer !=0))
-  { 
-    if(door2Locked == true) {
-      doorLock(2); 
-      door2locktimer = 0;
-    } else {
-      doorUnlock(2); 
-      door2locktimer = 0;
-    }   
-  }   
-
-  /*  Set optional "failsafe" time to lock up every night.
-   */
-
+  // Set optional "failsafe" time to lock up every night.
   ds1307.getDateDs1307(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);   // Get the current date/time
 
   if(hour == 23 && minute == 59 && door1Locked == false){
@@ -332,7 +264,7 @@ void loop()
    */
 
   if(reader1Count >= 26) {                              // When tag presented to reader1 (No keypad on this reader)
-    reader1dec = decodeCard(reader1);                    // Format the card data (format can be defined in user.h)
+    reader1dec = decodeCard(reader1);                   // Format the card data (format can be defined in user.h)
     logTagPresent(reader1dec, 1);                       // Write log entry to serial port
     reader1 = 0;
     reader1Count = 0;
