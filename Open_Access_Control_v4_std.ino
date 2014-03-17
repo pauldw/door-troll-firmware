@@ -139,7 +139,7 @@ uint8_t consoleFail = 0;                          // Tracks failed console login
 // Global values for the Wiegand RFID readers
 volatile long reader = 0;                      // Reader buffer
 long readerdec = 0;                            // Separate value for decoded reader values
-volatile int readerCount = 0;                 // Reader received bits counter
+volatile int reader_count = 0;                 // Reader received bits counter
 
 // Serial terminal buffer (needs to be global)
 char inString[64] = {0};                                         // Size of command buffer (<=128 for Arduino)

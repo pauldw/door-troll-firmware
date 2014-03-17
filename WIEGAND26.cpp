@@ -2,7 +2,7 @@
 
 extern byte readerPins[];          // Reader 1 connected to pins 4,5
 extern long reader;
-extern int  readerCount;
+extern int  reader_count;
 
 WIEGAND26::WIEGAND26(){
 }
@@ -19,13 +19,13 @@ void WIEGAND26::initReader(void) {
     digitalWrite(readerPins[i], HIGH); // enable internal pull up
   }
   delay(10);
-  readerCount=0;
+  reader_count=0;
   reader=0;
 }
 
 void  WIEGAND26::readerOne() {
   if(digitalRead(readerPins[1]) == LOW){
-    readerCount++;
+    reader_count++;
     reader = reader << 1;
     reader |= 1;
   }
@@ -33,7 +33,7 @@ void  WIEGAND26::readerOne() {
 
 void  WIEGAND26::readerZero() {
   if(digitalRead(readerPins[0]) == LOW){
-    readerCount++;
+    reader_count++;
     reader = reader << 1;   
   }
 }
