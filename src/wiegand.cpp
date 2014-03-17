@@ -1,4 +1,4 @@
-#include "WIEGAND26.h"
+#include "wiegand.h"
 
 extern byte readerPins[];          // Reader 1 connected to pins 4,5
 extern long reader;

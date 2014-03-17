@@ -111,7 +111,7 @@ boolean door_closed = false;                       // Keep track of when door la
 boolean sensor[4] = {false};                      //  Keep track of tripped sensors, do not log again until reset.
 
 /* Global Timers */
-unsigned long door_lock_timer = 0;                 // Keep track of when door is supposed to be relocked
+unsigned long door_relock_timer = 0;                 // Keep track of when door is supposed to be relocked
 unsigned long alarm_delay = 0;                     // Keep track of alarm delay. Used for "delayed activation" or level 2 alarm.
 unsigned long alarm_siren_timer=0;                // Keep track of how long alarm has gone off
 unsigned long console_fail_timer=0;               // Console password timer for failed logins
@@ -152,36 +152,6 @@ WIEGAND26 wiegand26;  // Wiegand26 (RFID reader serial protocol) library
 Adafruit_MCP23017 mcp;
 PCATTACH pcattach;    // Software interrupt library
 
-/* Set up some strings that will live in flash instead of memory. This saves our precious 2k of
- * RAM for something else.
- */
-const prog_uchar rebootMessage[]          PROGMEM  = {"Access Control System rebooted."};
-const prog_uchar doorChimeMessage[]       PROGMEM  = {"Front Door opened."};
-const prog_uchar doorslockedMessage[]     PROGMEM  = {"All Doors relocked"};
-const prog_uchar alarmtrainMessage[]      PROGMEM  = {"Alarm Training performed."};
-const prog_uchar privsdeniedMessage[]     PROGMEM  = {"Access Denied. Priveleged mode is not enabled."};
-const prog_uchar privsenabledMessage[]    PROGMEM  = {"Priveleged mode enabled."};
-const prog_uchar privsdisabledMessage[]   PROGMEM  = {"Priveleged mode disabled."};
-const prog_uchar privsAttemptsMessage[]   PROGMEM  = {"Too many failed attempts. Try again later."};
-
-const prog_uchar consolehelpMessage1[]    PROGMEM  = {"Valid commands are:"};
-const prog_uchar consolehelpMessage2[]    PROGMEM  = {"(d)ate, (s)show user, (m)odify user <num>  <usermask> <tagnumber>"};
-const prog_uchar consolehelpMessage3[]    PROGMEM  = {"(a)ll user dump,(r)emove_user <num>,(o)open door <num>"};
-const prog_uchar consolehelpMessage4[]    PROGMEM  = {"(u)nlock all doors,(l)lock all doors"};
-const prog_uchar consolehelpMessage5[]    PROGMEM  = {"(1)disarm_alarm, (2)arm_alarm,(3)train_alarm (9)show_status"};
-const prog_uchar consolehelpMessage6[]    PROGMEM  = {"(t)ime set <sec 0..59> <min 0..59> <hour 0..23> <day of week 1..7>"};
-const prog_uchar consolehelpMessage7[]    PROGMEM  = {"           <day 0..31> <mon 0..12> <year 0.99>"};
-const prog_uchar consolehelpMessage8[]    PROGMEM  = {"(e)nable <password> - enable or disable priveleged mode"};                                       
-const prog_uchar consolehelpMessage9[]    PROGMEM  = {"(h)ardware Test <iterations> - Run the hardware test"};   
-const prog_uchar consoledefaultMessage[]  PROGMEM  = {"Invalid command. Press '?' for help."};
-
-const prog_uchar statusMessage1[]         PROGMEM  = {"Alarm armed state (1=armed):"};
-const prog_uchar statusMessage2[]         PROGMEM  = {"Alarm siren state (1=activated):"};
-const prog_uchar statusMessage3[]         PROGMEM  = {"Front door open state (0=closed):"};
-const prog_uchar statusMessage4[]         PROGMEM  = {"Roll up door open state (0=closed):"};     
-const prog_uchar statusMessage5[]         PROGMEM  = {"Door 1 unlocked state(1=locked):"};                   
-const prog_uchar statusMessage6[]         PROGMEM  = {"Door 2 unlocked state(1=locked):"}; 
-
 void setup() 
 {
   Wire.begin();   // start Wire library as I2C-Bus Master
@@ -219,18 +189,13 @@ void setup()
   mcp.digitalWrite(STATUSLED, LOW);           // Turn the status LED green
 }
 
-/* Takes care of locking/unlocking the door as time passes. */
-void door_lock_tick()
+/* Takes care of re-locking the door as time passes. */
+void door_relock_tick()
 {
-  if(((millis() - door_lock_timer) >= DOORDELAY) && (door_lock_timer != 0))
+  if(((millis() - door_relock_timer) >= DOORDELAY) && (door_relock_timer != 0))
   { 
-    if(door_locked == true) {
-      lock_door();
-      door_lock_timer = 0;    
-    } else {                        
-      unlock_door(); 
-      door_lock_timer = 0;
-    }                         
+    lock_door();
+    door_relock_timer = 0;                             
   }
 }
 
@@ -242,17 +207,10 @@ void reader_tick()
   if(reader_count >= 26) {                              // When tag presented to reader1 (No keypad on this reader)
     decoded = decode_card(reader);                     // Format the card data (format can be defined in user.h)
     log_tag(decoded);                      // Write log entry to serial port
-    reader = 0;
-    reader_count = 0;
-
-    // TODO: report read to serial console
-    /* For the record, this is how a door unlock is done:
-    alarmState(0);
-    armAlarm(0);                            // Deactivate Alarm                  
-    door1locktimer=millis();
-    doorUnlock(1);                          // Unlock the door.
-    */
+    chirp_reader(1);
     
+    reader = 0;
+    reader_count = 0;    
     wiegand26.initReader();                     // Reset for next tag scan
   }
 }
@@ -260,7 +218,7 @@ void reader_tick()
 void loop()
 {                         
   serial_tick();
-  door_lock_tick();
+  door_relock_tick();
   reader_tick();
 }
 
@@ -268,11 +226,17 @@ void loop()
 void chirp_reader(uint8_t chirps)
 {
   for(uint8_t i = 0; i < chirps; i++) {
-    mcp.digitalWrite(READERBUZ, LOW);
-    delay(100);
     mcp.digitalWrite(READERBUZ, HIGH);
+    delay(100);
+    mcp.digitalWrite(READERBUZ, LOW);
     delay(200);                              
   }
+}
+
+void unlock_door_temporarily()
+{
+  door_relock_timer = millis();  // Set the door to be locked after some time has passed
+  unlock_door();
 }
 
 /* Send an unlock signal to the door and light the reader LED. */
@@ -280,15 +244,13 @@ void unlock_door()
 { 
   mcp.digitalWrite(DOORPIN, HIGH);
   mcp.digitalWrite(READERGRN, HIGH);
-  Serial.print("Door unlocked.");
 }
 
-/* Send a lock signal to the door and light the reader LED. */
+/* Send a lock signal to the door and extinguish the reader LED. */
 void lock_door() 
 {
   mcp.digitalWrite(DOORPIN, LOW);
   mcp.digitalWrite(READERGRN, LOW);
-  Serial.print("Door locked.");
 }
 
 void log_reboot() {                                  //Log system startup
@@ -296,7 +258,7 @@ void log_reboot() {                                  //Log system startup
 }
 
 void log_tag(long tag) {
-  Serial.print("ID:");
+  Serial.print("ID\t");
   Serial.print(tag, HEX);
   Serial.print("\n");
 }
@@ -317,310 +279,49 @@ long decode_card(long input)
   }
 }
 
+void log_ok()
+{
+  Serial.print("OK\n");
+}
+
+void log_err()
+{
+  Serial.print("ERR\n");
+}
+
+void process_command(char cmd) 
+{
+  switch(cmd) {
+    case 'u':
+      unlock_door_temporarily();
+      log_ok();
+      break;
+    default:
+      log_err();
+      break;
+  }
+}
+
+/* Honors one-character-then-newline commands like "u\n". */
 void serial_tick() 
 {                                               
-  byte cmds=7;
-  byte cmdlen=9;
-
-  uint8_t stringSize=(sizeof(inString)/sizeof(char));                    
-  char cmdString[cmds][cmdlen];                                             // Size of commands (4=number of items to parse, 10 = max length of each)
-
-
-  uint8_t j=0;                                                          // Counters
-  uint8_t k=0;
-  char cmd=0;
-
-
-  char ch;
-
-  if (Serial.available()) {                                       // Check if user entered a command this round	                                  
+  static char last_ch;
+  static char ch;
+  
+  if (Serial.available()) {                                       
     ch = Serial.read();                                            
-    if( ch == '\r' || inCount >= stringSize-1)  {                   // Check if this is the terminating carriage return
-      inString[inCount] = 0;
-      inCount=0;
+    if( ch == '\n' && last_ch != '\n' && last_ch != '\0') {
+      process_command(last_ch);
     } else {
-      (inString[inCount++] = ch); 
+      last_ch = ch; 
     }
-    //Serial.print(ch);                        // Turns echo on or off
+  }
+}                                      
 
-
-    if(inCount==0) {
-      for(uint8_t i=0;  i<stringSize; i++) {
-        cmdString[j][k] = inString[i];
-        if(k<cmdlen) k++;
-        else break;
-
-        if(inString[i] == ' ') // Check for space and if true, terminate string and move to next string.
-        {
-          cmdString[j][k-1]=0;
-          if(j<=cmds)j++;
-          else break;
-          k=0;             
-        }
-
-      }
-      cmd = cmdString[0][0];
-
-      /*switch(cmd) {
-
-
-      case 'e': 
-        {                                                 // Enable "privileged" commands at console
-          logDate();
-
-          if((consoleFail>=5) && (millis()-consolefailTimer<300000))  // Do not allow priv mode if more than 5 failed logins in 5 minute
-          {  
-            PROGMEMprintln(privsAttemptsMessage);
-            break;
-          }
-          if (strtoul(cmdString[1],NULL,16) == PRIVPASSWORD)
-          {
-            consoleFail=0;                    
-            PROGMEMprintln(privsenabledMessage);
-            privmodeEnabled=true;
-          }
-          else {
-            PROGMEMprintln(privsdisabledMessage);
-            privmodeEnabled=false;                                          
-            if(consoleFail==0) {                                   // Set the timeout for failed logins
-              consolefailTimer=millis();
-            }
-            consoleFail++;                                    // Increment the login failure counter
-          }
-
-          break;
-
-        }
-
-        //privmodeEnabled=true;            //Debugging statement
-
-
-      case 'a': 
-        {                                                 // List whole user database
-          if(privmodeEnabled==true) {                 
-            logDate();
-            Serial.println("User dump started.");
-            Serial.print("UserNum:");
-            Serial.print(" ");
-            Serial.print("Usermask:");
-            Serial.print(" ");
-            Serial.println("TagNum:");
-
-            for(int i=0; i<(NUMUSERS); i++){
-              dumpUser(i);
-              Serial.println();
-            }
-          }
-          else{
-            logprivFail();
-          }
-          break;
-        }
-
-      case 's': 
-        {                                                 // List user 
-          if(privmodeEnabled==true) {
-            Serial.print("UserNum:");
-            Serial.print(" ");
-            Serial.print("Usermask:");
-            Serial.print(" ");
-            Serial.println("TagNum:");
-            dumpUser(atoi(cmdString[1]));
-            Serial.println();
-          }
-          else{
-            logprivFail();
-          }
-          break;
-        }
-
-      case 'd': 
-        {                                                 // Display current time
-          logDate();
-          Serial.println();
-          break;
-        }
-
-      case '1': 
-        {                                               // Deactivate alarm                                       
-          if(privmodeEnabled==true) {
-            armAlarm(0);
-            alarmState(0);
-            chirpAlarm(1);  
-          }
-          else{
-            logprivFail();
-          }
-          break;
-        }
-      case '2': 
-        {                                               // Activate alarm with delay.
-          chirpAlarm(20);                                          // 200 chirps = ~30 seconds delay
-          armAlarm(1);                           
-          break; 
-        } 
-
-      case 'u': 
-        {
-          if(privmodeEnabled==true) {
-            alarmState(0);                                       // Set to door chime only/open doors                                                                       
-            armAlarm(4);
-            doorUnlock(1);
-            doorUnlock(2);
-            door1Locked=false;
-            door2Locked=false;
-            chirpAlarm(3);   
-          }
-
-          else{
-            logprivFail();
-          }
-          break;  
-        }
-      case 'l': 
-        {                                             // Lock all doors          
-          lockall();
-          chirpAlarm(1);   
-          break;  
-        }                            
-
-      case '3': 
-        {                                            // Train alarm sensors
-          if(privmodeEnabled==true) {
-            trainAlarm();
-          }
-          else{
-            logprivFail();
-          }
-          break;
-        }
-      case '9': 
-        {                                            // Show site status
-          PROGMEMprint(statusMessage1);
-          Serial.println(alarmArmed,DEC);
-          PROGMEMprint(statusMessage2);
-          Serial.println(alarmActivated,DEC);
-          PROGMEMprint(statusMessage3);
-          Serial.println(pollAlarm(3),DEC);
-          PROGMEMprint(statusMessage4);
-          Serial.println(pollAlarm(2),DEC);                  
-          PROGMEMprint(statusMessage5); 
-          Serial.println(door1Locked);                    
-          PROGMEMprint(statusMessage6); 
-          Serial.println(door2Locked); 
-          break;
-        }
-
-      case 'o': 
-        {  
-          if(privmodeEnabled==true) {
-            if(atoi(cmdString[1]) == 1){                                     
-              alarmState(0);                                       // Set to door chime only/open doors                                                                       
-              armAlarm(4);
-              doorUnlock(1);                                       // Open the door specified
-              door1locktimer=millis();
-              break;
-            }                    
-            if(atoi(cmdString[1]) == 2){  
-              alarmState(0);                                       // Set to door chime only/open doors                                                                       
-              armAlarm(4);
-              doorUnlock(2);                                        
-              door2locktimer=millis();
-              break;               
-            }
-            Serial.print("Invalid door number!");
-          }
-
-          else{
-            logprivFail();
-          }
-          break;
-        } 
-
-      case 'r': 
-        {                                                 // Remove a user
-          if(privmodeEnabled==true) {
-            dumpUser(atoi(cmdString[1]));
-            deleteUser(atoi(cmdString[1]));
-          }
-          else{
-            logprivFail();
-          }
-          break; 
-        }              
-
-      case 'm': 
-        {                                                                // Add/change a user                   
-          if(privmodeEnabled==true) {
-            dumpUser(atoi(cmdString[1]));
-            addUser(atoi(cmdString[1]), atoi(cmdString[2]), strtoul(cmdString[3],NULL,10)); // Decimal add user defined               
-            dumpUser(atoi(cmdString[1]));
-          }
-          else{
-            logprivFail();
-          }                                    
-
-          break;
-        }
-
-
-      case 't': 
-        {                                                                // Change date/time 
-          if(privmodeEnabled==true) {
-
-            Serial.print("Old time :");           
-            logDate();
-            Serial.println();
-            ds1307.setDateDs1307(atoi(cmdString[1]),atoi(cmdString[2]),atoi(cmdString[3]),
-            atoi(cmdString[4]),atoi(cmdString[5]),atoi(cmdString[6]),atoi(cmdString[7]));
-            Serial.print("New time :");
-            logDate();
-            Serial.println();
-          }
-          else{
-            logprivFail();
-          }                                    
-
-          break;
-        }                          
-
-      case 'h': 
-        {                                                    // Run hardware test
-          hardwareTest(atoi(cmdString[1]));  
-        }        
-
-      case '?': 
-        {                                                  // Display help menu
-          PROGMEMprintln(consolehelpMessage1);
-          PROGMEMprintln(consolehelpMessage2);
-          PROGMEMprintln(consolehelpMessage3);
-          PROGMEMprintln(consolehelpMessage4);
-          PROGMEMprintln(consolehelpMessage5);                     
-          PROGMEMprintln(consolehelpMessage6);                  
-          PROGMEMprintln(consolehelpMessage7);                     
-          PROGMEMprintln(consolehelpMessage8);                  
-          PROGMEMprintln(consolehelpMessage9);     
-          break;
-        }
-
-      default:  
-        PROGMEMprintln(consoledefaultMessage);
-        break;
-      }  */
-
-    }                                    // End of 'if' statement for Serial.available
-  }                                     // End of 'if' for string finished
-}                                      // End of function 
-
-
-
-
-/* Wrapper functions for interrupt attachment
- Could be cleaned up in library?
- */
 void callReader1Zero(){
   wiegand26.readerZero();
 }
+
 void callReader1One(){
   wiegand26.readerOne();
 }
