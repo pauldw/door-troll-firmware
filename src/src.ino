@@ -71,7 +71,7 @@
 
 #include <EEPROM.h>       // Needed for saving to non-voilatile memory on the Arduino.
 #include <DS1307.h>             // DS1307 RTC Clock/Date/Time chip library
-#include "WIEGAND26.h"          // Wiegand 26 reader format libary
+#include "wiegand.h"          // Wiegand 26 reader format libary
 #include <PCATTACH.h>           // Pcint.h implementation, allows for >2 software interupts.
 #include <Adafruit_MCP23017.h>  // Library for the MCP23017 i2c I/O expander
 #include <E24C1024.h>           // AT24C i2C EEPOROM library
