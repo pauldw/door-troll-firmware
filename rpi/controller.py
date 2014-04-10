@@ -61,7 +61,7 @@ class Board(object):
 class Members(object):
     def __init__(self, filename='/home/pi/members.tsv'):
         f = open(filename, 'rb')
-        self.members = csv.DictReader(f, delimiter='\t')
+        self.members = [i for i in csv.DictReader(f, delimiter='\t')]
 
     def get_by_tag(self, tag_id):
         for m in self.members:
