@@ -38,7 +38,7 @@ def format_id(_id):
     return capitalized
 
 class Board(object):
-    def __init__(self, port_name='/dev/ttyUSB0', baud_rate=9600):
+    def __init__(self, port_name='/dev/ttyAMA0', baud_rate=9600):
         self.port = serial.Serial(port_name, baudrate=baud_rate)
 
     def unlock(self):
@@ -51,7 +51,8 @@ class Board(object):
 
     def get_tag(self):
         '''Blocking.  Return ID if one is sent by board, None otherwise.'''
-        fields = self.port.readline().strip().split('\t')
+        line = self.port.readline()
+        fields = line.strip().split('\t')
 
         if len(fields) != 2 or fields[0] != "ID":
             return None
@@ -60,8 +61,8 @@ class Board(object):
 
 def run():
     b = Board()
-    core_ids = [format_id(l) for l in open("core_ids.txt").readlines()]
-    associate_ids = [format_id(l) for l in open("associate_ids.txt").readlines()]
+    core_ids = [format_id(l) for l in open("/home/pi/core_ids.txt").readlines()]
+    associate_ids = [format_id(l) for l in open("/home/pi/associate_ids.txt").readlines()]
 
     while True:
         tag = b.get_tag()
