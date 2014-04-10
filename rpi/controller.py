@@ -1,25 +1,19 @@
 '''Controller for the door troll.'''
 
 import serial
+import time
 import datetime
+import csv
 
-def check_access(tag, today, core_ids, associate_ids):
-    '''Returns True if the provided tag should have access, given the
-    current datetime, core IDs and associate IDs provided.
-    You can generate the datetime using datetime.datetime.today()'''
-
-    allowed_ids = core_ids[:]
+def is_associate_time(today):
+    '''Returns whether associates should have access at the given datetime.'''
 
     if today.weekday() in [5,6]:
-        allowed_ids += associate_ids
+        return True
     elif today.weekday() == 0 and today.hour >= 16:
-        allowed_ids += associate_ids
-
-    for _id in allowed_ids:
-        if tag == wiegandify(_id):
-            return True
-
-    return False
+        return True
+    else
+        return False
 
 def wiegandify(_id):
     '''Performs the same 3-byte truncation that your NFC wiegand readers do.'''
@@ -37,6 +31,11 @@ def format_id(_id):
 
     return capitalized
 
+def log(message):
+    f = open("/home/pi/log.txt", "a")
+    f.write("[%s] %s" % (time.ctime(), message))
+    f.close()
+    
 class Board(object):
     def __init__(self, port_name='/dev/ttyAMA0', baud_rate=9600):
         self.port = serial.Serial(port_name, baudrate=baud_rate)
@@ -58,19 +57,40 @@ class Board(object):
             return None
         else:
             return fields[1]
+            
+class Members(object):
+    def __init__(self, filename='/home/pi/members.tsv'):
+        f = open(filename, 'rb')
+        self.members = csv.DictReader(f, delimeter='\t')
 
+    def get_by_tag(self, tag_id):
+        for m in self.members:
+            if wiegand_id == wiegandify(format_id(m['RFID'])):
+                return m
+        return None
+        
 def run():
     b = Board()
-    core_ids = [format_id(l) for l in open("/home/pi/core_ids.txt").readlines()]
-    associate_ids = [format_id(l) for l in open("/home/pi/associate_ids.txt").readlines()]
-
+    m = Members()
+    
     while True:
         tag = b.get_tag()
-        if check_access(tag, datetime.datetime.today(), core_ids, associate_ids):
+        member = m.get_by_tag(tag)
+        today = datetime.datetime.today()
+        
+        if member == None:
+            log("Could not find member with tag %s." % (tag,))
+        elif (member['Paid Year'] < today.year) or (member['Paid Month'] < today.month):
+            log("Refused access to %s because they are not paid for this month." % member['Email'])
+        elif (member['Plan'] == 'Core'):
+            log("Granted access to %s because they are a paid core member." % member['Email'])
             b.unlock()
-            print("Unlocked for %s." % tag)
+        elif (member['Plan'] == 'Associate') and is_associate_time(today):
+            log("Granted access to %s because they are a paid associate during allowed hours." % member['Email'])
+            b.unlock()
         else:
-            print("Refused unlock for %s." % tag)
+            log("Refused access to %s for some unknown reason." % member['Email'])
+         
 
 if __name__ == "__main__":
     run()
