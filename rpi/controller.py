@@ -12,7 +12,7 @@ def is_associate_time(today):
         return True
     elif today.weekday() == 0 and today.hour >= 16:
         return True
-    else
+    else:
         return False
 
 def wiegandify(_id):
@@ -33,9 +33,9 @@ def format_id(_id):
 
 def log(message):
     f = open("/home/pi/log.txt", "a")
-    f.write("[%s] %s" % (time.ctime(), message))
+    f.write("[%s] %s\n" % (time.ctime(), message))
     f.close()
-    
+
 class Board(object):
     def __init__(self, port_name='/dev/ttyAMA0', baud_rate=9600):
         self.port = serial.Serial(port_name, baudrate=baud_rate)
@@ -57,30 +57,32 @@ class Board(object):
             return None
         else:
             return fields[1]
-            
+
 class Members(object):
     def __init__(self, filename='/home/pi/members.tsv'):
         f = open(filename, 'rb')
-        self.members = csv.DictReader(f, delimeter='\t')
+        self.members = csv.DictReader(f, delimiter='\t')
 
     def get_by_tag(self, tag_id):
         for m in self.members:
-            if wiegand_id == wiegandify(format_id(m['RFID'])):
+            if tag_id == wiegandify(format_id(m['RFID'])):
                 return m
         return None
-        
+
 def run():
     b = Board()
     m = Members()
-    
+
+    log("Program starting.")
+
     while True:
         tag = b.get_tag()
         member = m.get_by_tag(tag)
         today = datetime.datetime.today()
-        
+
         if member == None:
             log("Could not find member with tag %s." % (tag,))
-        elif (member['Paid Year'] < today.year) or (member['Paid Month'] < today.month):
+        elif (int(member['Paid Year']) < today.year) or (int(member['Paid Month']) < today.month):
             log("Refused access to %s because they are not paid for this month." % member['Email'])
         elif (member['Plan'] == 'Core'):
             log("Granted access to %s because they are a paid core member." % member['Email'])
@@ -88,9 +90,11 @@ def run():
         elif (member['Plan'] == 'Associate') and is_associate_time(today):
             log("Granted access to %s because they are a paid associate during allowed hours." % member['Email'])
             b.unlock()
+        elif (member['Plan'] == 'Associate') and not is_associate_time(today):
+            log("Refused access to %s because although they're a paid associate it's outside allowed hours." % member['Email'])
         else:
-            log("Refused access to %s for some unknown reason." % member['Email'])
-         
+            log("Refused access to %s." % member['Email'])
+
 
 if __name__ == "__main__":
     run()
