@@ -84,7 +84,7 @@ def run():
             log("Could not find member with tag %s." % (tag,))
         elif (int(member['Paid Year']) < today.year) or (int(member['Paid Month']) < today.month):
             log("Refused access to %s because they are not paid for this month." % member['Email'])
-        elif (member['Plan'] in ['Core', 'Grouped', 'Free']):
+        elif (member['Plan'] in ['Core', 'Distance', 'Grouped', 'Free']):
             log("Granted access to %s because they are a paid core member." % member['Email'])
             b.unlock()
         elif (member['Plan'] == 'Associate') and is_associate_time(today):
