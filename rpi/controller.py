@@ -10,7 +10,9 @@ def is_associate_time(today):
 
     if today.weekday() in [5,6]:
         return True
-    elif today.weekday() == 0 and today.hour >= 16:
+    elif today.weekday() == 0 and today.hour >= 16: # Monday evenings
+        return True
+    elif today.weekday() == 3 and today.hour >= 16: # Thursday evenings
         return True
     else:
         return False
